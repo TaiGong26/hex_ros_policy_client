@@ -1,0 +1,72 @@
+# Scalar parameters of the policy client node.
+# Every entry is declared and read at start up; a missing entry stops the node.
+# Device topics and per device settings live in devices.yaml.
+policy_client:
+  ros__parameters:
+    # Control loop rate [Hz] — paces the seven step loop.
+    control_rate_hz: 1000.0
+
+    # Observation publish rate [Hz] — decimated by a counter, not by time.
+    observation_rate_hz: 30.0
+
+    # Degrees of freedom of one arm; used to split stable_jnt.
+    arm_dof: 7
+
+    # Arm names in the order of stable_jnt; must match the arms of devices.yaml.
+    stable_arm_order: [left, right]
+
+    # Stable pose, flattened per arm in stable_arm_order order [rad].
+    stable_jnt: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    # Duration of the interpolation towards the stable pose [s].
+    stable_duration_s: 2.0
+
+    # Abort to EXIT when the stable pose is not reached within [s].
+    stable_timeout_s: 15.0
+
+    # Arrival criterion: per arm joint norm must stay below [rad].
+    arrive_threshold: 0.05
+
+    # Time allowed to collect the first sample of every device [s].
+    init_timeout_s: 5.0
+
+    # Per tick joint increment limit in the running state [rad].
+    arm_jnt_threshold: 0.1
+
+    # Per tick end effector increment limit [m]; unused while only jnt mode is
+    # supported.
+    arm_pos_threshold: 0.2
+
+    # Maximum task duration [s]; 0 disables the timeout.
+    max_episode_s: 120.0
+
+    # Age above which an observation source counts as stale [ms].
+    data_freshness_ms: 40.0
+
+    # Step used when an action frame carries none [ms].
+    action_step_ms: 33
+
+    # Strategy that merges the samples of several chunks: none, exponential
+    # or plain. Only exponential reads weight_decay.
+    action_average: none
+
+    # Influence of one chunk per step of recency in the time integration.
+    weight_decay: 0.5
+
+    # Number of action chunks kept before the oldest is dropped.
+    action_queue_capacity: 100
+
+    # Policy link keys.
+    observation_topic: policy/observation
+    inference_topic: policy/inference
+    action_topic: policy/action
+
+    # Interpolation used for chunks and for the return to stable pose.
+    interpolation: linear
+
+    # Directory of the recorder files; empty disables the recording.
+    recorder_dir: ""
+
+    # Path of the device table; the launch file overrides it by default.
+    device_path: ""

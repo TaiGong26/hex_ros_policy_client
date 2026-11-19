@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+    <name>hex_ros_policy_client</name>
+    <version>0.0.0</version>
+    <description>Policy client for imitation-learning deployment: publishes observations and executes action chunks.</description>
+    <maintainer email="dzr159@gmail.com">Dong Zhaorui</maintainer>
+    <license>Apache-2.0</license>
+
+    <exec_depend>rclpy</exec_depend>
+    <exec_depend>std_msgs</exec_depend>
+    <exec_depend>sensor_msgs</exec_depend>
+    <exec_depend>geometry_msgs</exec_depend>
+    <exec_depend>rcl_interfaces</exec_depend>
+    <exec_depend>hex_ros_msgs</exec_depend>
+    <exec_depend>python3-numpy</exec_depend>
+    <exec_depend>python3-opencv</exec_depend>
+    <exec_depend>python3-yaml</exec_depend>
+    <exec_depend>python3-msgpack</exec_depend>
+    <!-- hex_util_zenoh has no rosdep key; install it with pip:
+         pip install -e <workspace>/pkg/hex_util_zenoh -->
+    <exec_depend>hex_util_zenoh</exec_depend>
+
+    <test_depend>python3-pytest</test_depend>
+
+    <export>
+        <build_type>ament_python</build_type>
+    </export>
+</package>
