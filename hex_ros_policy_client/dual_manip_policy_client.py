@@ -359,6 +359,7 @@ class DualManipPolicyClient:
 
     def __exit_behavior(self) -> None:
         """Release every resource once the terminal state is entered."""
+        self.__note_state_entry()
         self.shutdown()
 
     def __publish_observation(self, now_ns: int) -> None:
