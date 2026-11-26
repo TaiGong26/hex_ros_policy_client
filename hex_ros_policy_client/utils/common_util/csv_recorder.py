@@ -3,42 +3,23 @@
 # Author: Dong Zhaorui 847235539@qq.com
 # Date  : 2026-11-18
 ################################################################
-"""Recorder for the data a rosbag cannot capture.
-
-A bag already records the observation frames and the raw ``manip_state``
-stream, so repeating them here would only double the volume. What is kept is
-the data that exists only inside this process: the decoded action chunks, the
-weights of the time integration, the target before and after the step limit,
-and the state transitions with their internal events.
-
-Columns and files are generated from the device table. No side name appears in
-the code, so the same recorder serves one arm and several.
-
-Attributes:
-    KIND_STATE: Recorder file that holds migrations and events.
-    KIND_CHUNK: Recorder file that holds decoded chunks.
-    KIND_WEIGHT: Recorder file that holds integration weights.
-    KIND_TARGET: Recorder file that holds targets before and after limiting.
-    STAGES: Allowed values of the target stage column.
-"""
 
 from __future__ import annotations
 
 import csv
 from pathlib import Path
 
+from ...struct.cmd_struct import ControlIntent
+
 KIND_STATE = "states"
 KIND_CHUNK = "chunks"
-KIND_WEIGHT = "weights"
 KIND_TARGET = "targets"
-RECORDER_KINDS = (KIND_STATE, KIND_CHUNK, KIND_WEIGHT, KIND_TARGET)
+RECORDER_KINDS = (KIND_STATE, KIND_CHUNK, KIND_TARGET)
 
 STAGE_RAW = "raw"
 STAGE_LIMITED = "limited"
 STAGES = (STAGE_RAW, STAGE_LIMITED)
 
-EVENT_COLUMNS = ("now_ns", "kind", "old", "new", "detail")
-WEIGHT_COLUMNS = ("now_ns", "seq", "weight")
 
 
 class CsvRecorder:
@@ -48,6 +29,8 @@ class CsvRecorder:
         directory (Path): Directory the files are written to.
         columns (dict): Recorder kind to the column tuple of that file.
     """
+
+    _EVENT_COLUMNS = ("now_ns", "kind", "old", "new", "detail")
 
     def __init__(self, directory: str, arm_names: tuple[str, ...],
                  arm_dof: int) -> None:
@@ -66,8 +49,7 @@ class CsvRecorder:
         self.directory = Path(directory)
         self.__arm_names = tuple(arm_names)
         self.columns = {
-            KIND_STATE: EVENT_COLUMNS,
-            KIND_WEIGHT: WEIGHT_COLUMNS,
+            KIND_STATE: self._EVENT_COLUMNS,
             KIND_CHUNK: ("seq", "stamp_ns", "step_ms", "step_index")
             + _device_columns(
                 arm_names=self.__arm_names,
@@ -120,24 +102,6 @@ class CsvRecorder:
             row=(now_ns, kind, old, new, detail),
         )
 
-    def record_weight(
-        self,
-        now_ns: int,
-        seq: int,
-        weight: float,
-    ) -> None:
-        """Record the weight one chunk contributed to the current target.
-
-        Args:
-            now_ns (int): Time of the record.
-            seq (int): Sequence number of the chunk.
-            weight (float): Weight it was given.
-        """
-        self.__write(
-            kind=KIND_WEIGHT,
-            row=(now_ns, seq, f"{weight:.6f}"),
-        )
-
     def record_chunk(self, seq: int, stamp_ns: int, step_ms: int,
                      step_index: int, arm_row: dict,
                      grip_row: dict) -> None:
@@ -163,20 +127,20 @@ class CsvRecorder:
         )
 
     def record_target(self, now_ns: int, stage: str,
-                      target: dict) -> None:
+                      target: ControlIntent) -> None:
         """Record one target, before or after the step limit.
 
         Args:
             now_ns (int): Time of the record.
             stage (str): ``STAGE_RAW`` or ``STAGE_LIMITED``.
-            target (dict): Target keyed by command type and device name.
+            target (ControlIntent): ControlIntent grouped by command type.
         """
         if stage not in STAGES:
             raise ValueError(f"unknown stage {stage!r}")
         arm_row = {name: getattr(command, "pos", [])
-                   for name, command in target.get("arm", {}).items()}
+                   for name, command in target.arm.items()}
         grip_row = {name: getattr(command, "pos", [])
-                    for name, command in target.get("grip", {}).items()}
+                    for name, command in target.grip.items()}
         row = [now_ns, stage]
         row.extend(_device_values(
             arm_names=self.__arm_names,

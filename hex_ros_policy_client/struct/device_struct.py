@@ -3,16 +3,6 @@
 # Author: Dong Zhaorui 847235539@qq.com
 # Date  : 2026-11-18
 ################################################################
-"""Device level data structures.
-
-Data only: the structures describe what a device produced, they never convert
-or validate physical values.
-
-Required and optional fields are expressed by the type itself. A field without
-a default and without ``| None`` is required; a field typed ``X | None`` with a
-``None`` default is optional. No comment marks them again, so the two places
-cannot disagree.
-"""
 
 from __future__ import annotations
 
@@ -29,9 +19,10 @@ class ArmState:
     """State of one manipulator arm.
 
     Attributes:
-        arm_pos (np.ndarray): Joint positions in radians.
-        arm_vel (np.ndarray): Joint velocities in radians per second.
-        arm_eff (np.ndarray): Joint efforts.
+        arm_pos (np.ndarray): Joint positions in radians, one entry per joint.
+        arm_vel (np.ndarray): Joint velocities in radians per second, same
+            length as ``arm_pos``.
+        arm_eff (np.ndarray): Joint efforts, same length as ``arm_pos``.
         ee_base (Pose): End effector pose in the arm base frame.
     """
 
@@ -45,13 +36,10 @@ class ArmState:
 class GripState:
     """State of one gripper.
 
-    The raw values are kept as they arrive; the mapping to the model range
-    belongs to the device layer.
-
     Attributes:
-        grip_pos (np.ndarray): Gripper position.
-        grip_vel (np.ndarray): Gripper velocity.
-        grip_eff (np.ndarray): Gripper effort.
+        grip_pos (np.ndarray): Gripper position as reported by the device.
+        grip_vel (np.ndarray): Gripper velocity as reported by the device.
+        grip_eff (np.ndarray): Gripper effort as reported by the device.
     """
 
     grip_pos: np.ndarray
@@ -63,12 +51,9 @@ class GripState:
 class ArmObservation:
     """Latest state of one arm and its gripper.
 
-    Arm and gripper come from the same ``manip_state`` message, so they share
-    the single outer header stamp instead of keeping two clocks.
-
     Attributes:
-        stamp_ns (int | None): Stamp of the source message, ``None`` when the
-            device never received anything yet.
+        stamp_ns (int | None): Stamp of the source message in nanoseconds,
+            ``None`` when nothing has arrived yet.
         arm_state (ArmState | None): Arm part of the message.
         grip_state (GripState | None): Gripper part of the message.
     """
@@ -83,7 +68,7 @@ class ImageFrame:
     """One image with its encoding and geometry.
 
     Attributes:
-        ts_ns (int): Capture time taken from the image header stamp.
+        ts_ns (int): Capture time in nanoseconds.
         encoding (str): Pixel format such as ``rgb8`` or ``mono16``, or
             ``jpeg`` for already encoded bytes.
         width (int): Image width in pixels.
@@ -104,9 +89,9 @@ class CameraObservation:
     """One frame of one camera.
 
     Attributes:
-        rgb (ImageFrame): Colour frame, always present.
-        depth (ImageFrame | None): Depth frame, ``None`` when the camera is
-            declared without a depth topic.
+        rgb (ImageFrame): Colour frame.
+        depth (ImageFrame | None): Depth frame, ``None`` when the camera has no
+            depth stream.
     """
 
     rgb: ImageFrame
@@ -114,19 +99,13 @@ class CameraObservation:
 
 
 class ObservationFrame(TypedDict):
-    """One assembled observation, the input of the wire frame.
-
-    The name repeats the frame of the protocol on purpose: both carry the same
-    three keys. The two device maps hold the samples of this package instead of
-    the wire payloads, and the stamp stays integer nanoseconds instead of the
-    ``secs``/``nsecs`` split. Time inside this package is always integer
-    nanoseconds, so the split is made once, by ``build_observation_frame``, on
-    the boundary.
+    """One assembled observation, with integer nanoseconds as its stamp.
 
     Attributes:
-        stamp_ns (int): Frame stamp produced by the observation layer.
-        camera (dict): Camera samples keyed by device name.
-        arm (dict): Arm samples keyed by device name.
+        stamp_ns (int): Stamp of the frame in nanoseconds.
+        camera (dict[str, CameraObservation]): Camera samples keyed by device
+            name.
+        arm (dict[str, ArmObservation]): Arm samples keyed by device name.
     """
 
     stamp_ns: int

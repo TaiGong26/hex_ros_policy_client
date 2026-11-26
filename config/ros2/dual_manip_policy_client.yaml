@@ -1,0 +1,39 @@
+# Scalar parameters of the dual manip policy client node.
+# Every entry is declared and read at start up; a missing entry stops the node.
+# Device topics and per device settings live in dual_manip_devices.yaml.
+dual_manip_policy_client:
+  ros__parameters:
+    # Control loop rate [Hz] — paces the seven step loop.
+    rate_ros: 1000.0
+
+    # Observation publish rate [Hz] — decimated by a counter, not by time.
+    observation_rate_hz: 30.0
+
+    # Duration of the interpolation towards the stable pose [s].
+    stable_duration_s: 2.0
+
+    # Abort to EXIT when the stable pose is not reached within [s].
+    stable_timeout_s: 15.0
+
+    # Arrival criterion: per arm joint norm must stay below [rad].
+    arrive_threshold: 0.05
+
+    # Time allowed to collect the first sample of every device [s].
+    init_timeout_s: 5.0
+
+    # Maximum task duration [s]; 0 disables the timeout.
+    max_episode_s: 120.0
+
+    # Age above which an observation source counts as stale [ms].
+    data_freshness_ms: 40.0
+
+    # Policy link keys.
+    observation_topic: policy/observation
+    inference_topic: policy/inference
+    action_topic: policy/action
+
+    # Directory of the recorder files; empty disables the recording.
+    recorder_dir: ""
+
+    # Path of the device table; the launch file overrides it by default.
+    device_path: ""

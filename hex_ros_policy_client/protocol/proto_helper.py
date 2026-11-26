@@ -3,19 +3,6 @@
 # Author: Dong Zhaorui 847235539@qq.com
 # Date  : 2026-11-18
 ################################################################
-"""Frame construction and interpretation, the business side.
-
-The transport layer (``hex_util_zenoh.proto_util``) only knows dictionaries and
-bytes; it never interprets a field. That interpretation lives here: the domain
-objects of an observation become an observation frame, the state becomes the
-enable frame, and a frame of the model side becomes action semantics. The three
-directions share one frame definition, so renaming or adding a field only
-touches that file.
-
-A device name may differ from the field name the model expects; the mapping
-is a function argument that defaults to identity, so a caller can rename
-fields without changing any state of this module.
-"""
 
 from __future__ import annotations
 
@@ -137,7 +124,6 @@ def decode_action_chunk(frame: dict) -> dict:
     }
 
 
-
 def _image_payload(frame: Any) -> ImagePayload:
     """Convert one image to its wire payload.
 
@@ -226,11 +212,18 @@ def _pose_vector(pose: Any) -> list[float]:
         pose: ``Pose`` of the data layer, or ``None``.
 
     Returns:
-        list: Seven floats, empty when the pose is missing.
+        list: Seven floats ``(px, py, pz, qw, qx, qy, qz)``, empty when the
+        pose is missing.
     """
     if pose is None:
         return []
-    return [pose.position.x, pose.position.y, pose.position.z,
-            pose.orientation.x, pose.orientation.y, pose.orientation.z,
-            pose.orientation.w]
-
+    orientation = pose.orientation
+    return [
+        pose.position.x,
+        pose.position.y,
+        pose.position.z,
+        orientation.w,
+        orientation.x,
+        orientation.y,
+        orientation.z,
+    ]

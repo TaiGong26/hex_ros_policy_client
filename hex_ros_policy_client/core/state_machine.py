@@ -3,30 +3,20 @@
 # Author: Dong Zhaorui 847235539@qq.com
 # Date  : 2026-11-18
 ################################################################
-"""Event driven state machine.
-
-The machine stores three tables - event callbacks, per tick behaviours and one
-change callback - and applies at most one event per tick. It knows nothing
-about the business: it holds no state name of its own (the start state is an
-argument) and calls callbacks without arguments, so a caller keeps its own
-fields.
-
-Events are queued instead of applied in place, because they arrive from the ROS
-callback thread and from the signal handler, while migration must happen in the
-main loop only.
-"""
 
 from __future__ import annotations
 
 import threading
-from collections import deque
 from typing import Any, Callable
-
-from ..utils import drop
 
 
 class StateMachine:
-    """Table driven state machine with a single event queue.
+    """Table driven state machine with a deferred transition request.
+
+    ``transition_to`` only stores a target; ``step`` is the single place that
+    changes the state, and it runs the task of the state it just moved to.
+    ``step`` has to be called from one thread, ``transition_to`` may be called
+    from any thread.
 
     Attributes:
         state (str): Current state; starts at the value given to the
@@ -35,24 +25,21 @@ class StateMachine:
 
     def __init__(
         self,
-        start_state: str,
-        logger: Any | None = None,
+        initial_state: str,
+        logger: Any,
     ) -> None:
         """Create a machine that starts in the given state.
 
         Args:
-            start_state (str): State the machine starts in; required, because
-                the machine holds no business state name of its own.
-            logger (Any | None): Logger used to report unknown events.
+            initial_state (str): State the machine starts in.
+            logger (Any): Logger that provides ``logw``.
         """
-        self.__on_event: dict[tuple[str, str], Callable] = {}
-        self.__on_tick: dict[str, Callable] = {}
-        self.__on_change: Callable | None = None
-        self.__events: set[str] = set()
-        self.__pending: deque[str] = deque()
         self.__lock = threading.Lock()
+        self.__state_table: dict[str, Callable[[], None]] = {}
+        self.__state_trans: dict[str, set[str]] = {}
+        self.__state = initial_state
+        self.__pending_state: str | None = None
         self.__logger = logger
-        self.__state = start_state
 
     @property
     def state(self) -> str:
@@ -61,144 +48,85 @@ class StateMachine:
         Returns:
             str: State name.
         """
-        return self.__state
+        with self.__lock:
+            return self.__state
 
-    def create_event(self, name: str) -> None:
-        """Register an event name.
+    def register_state(
+        self,
+        name: str,
+        callback: Callable[[], None],
+    ) -> None:
+        """Register one state and the task it runs every step.
 
         Args:
-            name (str): Event name; internal events have to be registered as
-                well.
+            name (str): State name.
+            callback (Callable[[], None]): Task of this state; called with no
+                argument once per step, its return value is ignored.
 
         Raises:
+            TypeError: If the callback is not callable.
             ValueError: If the name is already registered.
         """
-        if name in self.__events:
-            raise ValueError(f"event {name!r} already registered")
-        self.__events.add(name)
-
-    def register(
-        self,
-        event: str,
-        state: str,
-        callback: Callable,
-    ) -> None:
-        """Register an event callback for one state.
-
-        Args:
-            event (str): Event name, previously created.
-            state (str): State the callback belongs to.
-            callback (Callable): Called with no arguments; it returns the next
-                state, or ``None`` to stay.
-
-        Raises:
-            ValueError: If the event was not created or the pair is already
-                registered.
-            TypeError: If the callback is not callable.
-        """
-        if event not in self.__events:
-            raise ValueError(f"event {event!r} was not created")
         if not callable(callback):
-            raise TypeError(f"callback for {event!r} is not callable")
-        key = (state, event)
-        if key in self.__on_event:
-            raise ValueError(
-                f"({state}, {event}) already registered")
-        self.__on_event[key] = callback
+            raise TypeError(f"task for {name!r} is not callable")
 
-    def register_behavior(
-        self,
-        state: str,
-        callback: Callable,
-    ) -> None:
-        """Register the per tick behaviour of one state.
-
-        Args:
-            state (str): State the behaviour belongs to.
-            callback (Callable): Called with no arguments every tick; its
-                return value is ignored, because a behaviour never migrates.
-
-        Raises:
-            ValueError: If the state already has a behaviour.
-            TypeError: If the callback is not callable.
-        """
-        if not callable(callback):
-            raise TypeError(f"behaviour for {state!r} is not callable")
-        if state in self.__on_tick:
-            raise ValueError(f"behaviour for {state!r} already registered")
-        self.__on_tick[state] = callback
-
-    def register_change(self, callback: Callable) -> None:
-        """Register the migration callback.
-
-        Args:
-            callback (Callable): Called as ``callback(old, new)`` on every
-                migration.
-
-        Raises:
-            TypeError: If the callback is not callable.
-        """
-        if not callable(callback):
-            raise TypeError("change callback is not callable")
-        self.__on_change = callback
-
-    def post(self, event: str) -> None:
-        """Queue one event; safe from any thread.
-
-        Args:
-            event (str): Event name, previously created.
-
-        Raises:
-            ValueError: If the event was never created.
-        """
-        if event not in self.__events:
-            raise ValueError(f"event {event!r} was not created")
         with self.__lock:
-            self.__pending.append(event)
+            if name in self.__state_table:
+                raise ValueError(f"state {name!r} already registered")
+            self.__state_table[name] = callback
 
-    def process_events(self) -> None:
-        """Apply at most one queued event."""
+    def register_transition(self, source: str, target: str) -> None:
+        """Register one allowed transition.
+
+        Args:
+            source (str): State the transition leaves; already registered.
+            target (str): State the transition reaches; already registered.
+
+        Raises:
+            ValueError: If either end was not registered.
+        """
         with self.__lock:
-            event = self.__pending.popleft() if self.__pending else None
-        if event is None:
-            return
-        handler = self.__on_event.get((self.__state, event))
-        if handler is None:
-            drop(
-                logger=self.__logger,
-                point="event.dispatch",
-                obj="event dropped",
-                cause=f"state {self.__state} has no handler for {event}, "
-                f"ignored by design",
-                reason="unregistered",
-            )
-            return
-        next_state = handler()
-        if next_state is not None and next_state != self.__state:
-            self.__set_state(next_state=next_state)
+            if source not in self.__state_table:
+                raise ValueError(f"state {source!r} was not registered")
+            if target not in self.__state_table:
+                raise ValueError(f"state {target!r} was not registered")
 
-    def run_behavior(self) -> None:
-        """Run the per tick behaviour of the current state."""
-        callback = self.__on_tick.get(self.__state)
+            self.__state_trans.setdefault(source, set()).add(target)
+
+    def transition_to(self, target: str) -> None:
+        """Request a transition; the state changes on the next step.
+
+        An unknown target or an unreachable one is dropped with a warning
+        instead of raising, because the request may come from a task callback
+        or from a signal handler, where raising has no receiver.
+
+        Args:
+            target (str): State to move to; registered and reachable from the
+                current state.
+        """
+        with self.__lock:
+            source = self.__state
+            if target not in self.__state_table:
+                reason = f"{target} is not registered"
+            elif target not in self.__state_trans.get(source, ()):
+                reason = f"{source} -> {target} is not allowed"
+            else:
+                self.__pending_state = target
+                return
+        self.__logger.logw(
+            f"[state.transition/rejected] request dropped: {reason}")
+
+    def step(self) -> None:
+        """Apply the pending transition, then run the task of the state.
+
+        The task runs outside the lock, so it may call ``transition_to`` and
+        the request is applied by the next step.
+        """
+        with self.__lock:
+            target = self.__pending_state
+            self.__pending_state = None
+            if target is not None and target != self.__state:
+                self.__state = target
+            callback = self.__state_table.get(self.__state)
         if callback is not None:
             callback()
-
-    def pending(self) -> int:
-        """Number of queued events, for tests and diagnostics.
-
-        Returns:
-            int: Queue length.
-        """
-        with self.__lock:
-            return len(self.__pending)
-
-    def __set_state(self, next_state: str) -> None:
-        """Move to another state and run the change callback.
-
-        Args:
-            next_state (str): State to move to.
-        """
-        previous = self.__state
-        self.__state = next_state
-        if self.__on_change is not None:
-            self.__on_change(previous, next_state)

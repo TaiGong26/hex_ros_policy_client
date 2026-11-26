@@ -52,7 +52,7 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'policy_client = '
+            'dual_manip_policy_client = '
             'hex_ros_policy_client.dual_manip_policy_client:main',
         ],
     },
