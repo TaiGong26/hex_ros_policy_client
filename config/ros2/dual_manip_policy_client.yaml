@@ -29,6 +29,17 @@ dual_manip_policy_client:
     inference_topic: policy/inference
     action_topic: policy/action
 
+    # Keyboard keys, one lowercase letter each, read from
+    # teleop_keyboard_state and taken on the press edge only.
+    # online: leaves INIT once every device fed back.
+    # start : starts a task, WAITING to RUNNING.
+    # end   : finishes a task, RUNNING back to the stable pose.
+    # exit  : releases the node, no extra return motion.
+    key_online: s
+    key_start: b
+    key_end: e
+    key_exit: q
+
     # Directory of the recorder files; empty disables the recording.
     recorder_dir: ""
 

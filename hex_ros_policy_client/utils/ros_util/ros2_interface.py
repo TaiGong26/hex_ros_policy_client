@@ -44,6 +44,10 @@ class DataInterface(InterfaceBase):
         self.__node.declare_parameter('inference_topic',
                                       'policy/inference')
         self.__node.declare_parameter('action_topic', 'policy/action')
+        self.__node.declare_parameter('key_online', 's')
+        self.__node.declare_parameter('key_start', 'b')
+        self.__node.declare_parameter('key_end', 'e')
+        self.__node.declare_parameter('key_exit', 'q')
         self.__node.declare_parameter('recorder_dir', "")
         self.__node.declare_parameter('device_path', "")
 
@@ -68,6 +72,10 @@ class DataInterface(InterfaceBase):
             self.__node.get_parameter('inference_topic').value,
             "action_topic":
             self.__node.get_parameter('action_topic').value,
+            "key_online": self.__node.get_parameter('key_online').value,
+            "key_start": self.__node.get_parameter('key_start').value,
+            "key_end": self.__node.get_parameter('key_end').value,
+            "key_exit": self.__node.get_parameter('key_exit').value,
             "recorder_dir":
             self.__node.get_parameter('recorder_dir').value,
             "device_path":

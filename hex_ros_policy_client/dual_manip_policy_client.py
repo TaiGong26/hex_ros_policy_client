@@ -42,7 +42,7 @@ STATE_EXIT = "EXIT"
 
 REASON_EXIT = "exit"
 REASON_INIT_TIMEOUT = "init_timeout"
-REASON_KEYBOARD_INTERRUPT = "keyboard_interrupt"
+REASON_KEYBOARD_EXIT = "keyboard_exit"
 
 
 class DualManipPolicyClient:
@@ -58,7 +58,7 @@ class DualManipPolicyClient:
     """
 
     _MIDDLEWARE_QUEUE_MAX = 100
-    _STOP_KEY = "key_q"
+    _KEY_ROLES = ("online", "start", "end", "exit")
 
     def __init__(
         self,
@@ -102,7 +102,10 @@ class DualManipPolicyClient:
         self.__obs_count = 0
         self.__chunk_seen = False
         self.__anchor_given = False
-        self.__prev_stop_key = False
+        self.__keys: dict = {}
+        self.__key_state: dict = {}
+        self.__edges: dict = {}
+        self.__keyboard_seen = False
         self.__read_scalars()
 
     def start(self) -> None:
@@ -250,6 +253,20 @@ class DualManipPolicyClient:
         rate = float(self.__params["observation_rate_hz"])
         control_rate = float(self.__params["rate_ros"])
         self.__obs_divider = max(1, int(round(control_rate / rate)))
+        keys = {}
+        for role in self._KEY_ROLES:
+            letter = str(self.__params[f"key_{role}"])
+            if (len(letter) != 1 or not letter.isascii()
+                    or not letter.isalpha() or not letter.islower()):
+                raise ValueError(
+                    f"key_{role} must be one lowercase letter, "
+                    f"got {letter!r}")
+            keys[role] = f"key_{letter}"
+        if len(set(keys.values())) != len(keys):
+            raise ValueError(
+                "the four keyboard keys must differ, "
+                f"got {sorted(keys.values())}")
+        self.__keys = keys
 
     def __register_states(self) -> None:
         """Register every state with the task it runs each step."""
@@ -281,33 +298,27 @@ class DualManipPolicyClient:
                 source=source, target=target)
 
     def __init_behavior(self) -> None:
-        """Wait until every declared source and the keyboard reported once.
+        """Wait for every source, then for the operator to accept the robot.
 
-        The judgement is presence and elapsed time only; the frame itself is
-        not consumed here, because no policy runs before the stable pose.
+        The timeout covers the arrival of the sources only. Once they have
+        reported, the node waits for the online key without a deadline,
+        because how long an operator takes is not a fault of the setup.
         """
         self.__note_state_entry()
-        keyboard = self.__ros_interface.get_keyboard_state(latest=True)
-        stop_pressed = (keyboard is not None
-                        and bool(getattr(keyboard, self._STOP_KEY, False)))
-        if stop_pressed and not self.__prev_stop_key:
-            self.__logw(
-                f"[node.init/keyboard_stop] stop and exit: "
-                f"key {self._STOP_KEY} went down")
-            self.__prev_stop_key = stop_pressed
-            self.request_exit(reason=REASON_KEYBOARD_INTERRUPT)
+        if not (self.__devices_ready() and self.__keyboard_seen):
+            if self.__elapsed_ns() >= self.__init_timeout_ns:
+                self.__logw(
+                    "[node.init/timeout] exit requested: sources did not "
+                    f"report within {self.__params['init_timeout_s']}s, "
+                    f"devices_ready={self.__devices_ready()}, "
+                    f"keyboard_ready={self.__keyboard_seen}")
+                self.request_exit(reason=REASON_INIT_TIMEOUT)
             return
-        self.__prev_stop_key = stop_pressed
-        if self.__devices_ready() and keyboard is not None:
+        if self.__edges.get("online"):
+            self.__logw(
+                "[node.init/online] robot accepted: "
+                f"key {self.__keys['online']} went down")
             self.__state_machine.transition_to(STATE_RETURN_TO_STABLE)
-            return
-        if self.__elapsed_ns() >= self.__init_timeout_ns:
-            self.__logw(
-                "[node.init/timeout] exit requested: sources did not report "
-                f"within {self.__params['init_timeout_s']}s, "
-                f"devices_ready={self.__devices_ready()}, "
-                f"keyboard_ready={keyboard is not None}")
-            self.request_exit(reason=REASON_INIT_TIMEOUT)
 
     def __stable_behavior(self) -> None:
         """Ramp every arm to its stable pose and wait for the arrival."""
@@ -321,17 +332,27 @@ class DualManipPolicyClient:
             self.__state_machine.transition_to(STATE_WAITING)
 
     def __waiting_behavior(self) -> None:
-        """Hold the stable pose until the model sends the first chunk."""
+        """Hold the stable pose until the operator starts the task."""
         self.__note_state_entry()
         self.__robot.hold_position()
-        if self.__chunk_seen:
-            self.__chunk_seen = False
+        if self.__edges.get("start"):
+            self.__logw(
+                "[node.waiting/start] task started: "
+                f"key {self.__keys['start']} went down")
             self.__last_obs_ns = self.get_now_timestamp()
             self.__state_machine.transition_to(STATE_RUNNING)
 
     def __running_behavior(self) -> None:
         """Publish observations on the decimated ticks and dispatch targets."""
         self.__note_state_entry()
+        self.__drain_chunks()
+        if self.__edges.get("end"):
+            self.__logw(
+                "[node.running/end] back to stable: "
+                f"key {self.__keys['end']} went down")
+            self.__clear_episode()
+            self.__state_machine.transition_to(STATE_RETURN_TO_STABLE)
+            return
         now_ns = self.get_now_timestamp()
         self.__obs_count += 1
         if self.__obs_count >= self.__obs_divider:
@@ -355,12 +376,29 @@ class DualManipPolicyClient:
             self.__logw(
                 "[node.task/timeout] back to stable: "
                 f"task ran {self.__params['max_episode_s']}s")
+            self.__clear_episode()
             self.__state_machine.transition_to(STATE_RETURN_TO_STABLE)
 
     def __exit_behavior(self) -> None:
         """Release every resource once the terminal state is entered."""
         self.__note_state_entry()
+        self.__clear_episode()
         self.shutdown()
+
+    def __clear_episode(self) -> None:
+        """Drop what an episode accumulated, so the next one starts clean.
+
+        The action window keeps its points, its latched step and its anchor
+        until they are cleared, and the transport keeps whatever the model
+        sent while no task was running; without this the second episode
+        would move on the tail of the first one.
+        """
+        if self.__action_process is not None:
+            self.__action_process.reset()
+        self.__anchor_given = False
+        self.__obs_count = 0
+        self.__last_obs_ns = 0
+        self.__policy_middleware.request_chunk()
 
     def __publish_observation(self, now_ns: int) -> None:
         """Push the newest observation and publish the assembled frame.
@@ -410,7 +448,6 @@ class DualManipPolicyClient:
             action_process.push_obs(observation=frame)
             self.__anchor_given = True
         action_process.push_chunk(chunk=chunk)
-        self.__chunk_seen = True
 
     def __devices_ready(self) -> bool:
         """Whether every declared device reported at least once.
@@ -474,9 +511,33 @@ class DualManipPolicyClient:
         :meth:`run`; this method only refreshes what the behaviours read.
         """
         now_ns = self.get_now_timestamp()
+        self.__read_keys()
+        if self.__edges.get("exit"):
+            self.__logw(
+                "[node.key/exit] stop and exit: "
+                f"key {self.__keys['exit']} went down")
+            self.request_exit(reason=REASON_KEYBOARD_EXIT)
         self.__current_obs = self.__robot.read_obs()
-        self.__drain_chunks()
         self.publish_inference_state(now_ns=now_ns)
+
+    def __read_keys(self) -> None:
+        """Read the keyboard once and keep only the edges of this tick.
+
+        The interface hands out the newest message and clears its queue, so a
+        single read here serves every state; polling from a state would take
+        the sample away from the others. A key fires only when it went down
+        since the last message, so holding it does not repeat the action.
+        """
+        keyboard = self.__ros_interface.get_keyboard_state(latest=True)
+        self.__edges = {role: False for role in self._KEY_ROLES}
+        if keyboard is None:
+            return
+        self.__keyboard_seen = True
+        for role, field in self.__keys.items():
+            pressed = bool(getattr(keyboard, field, False))
+            self.__edges[role] = (pressed
+                                  and not self.__key_state.get(field, False))
+            self.__key_state[field] = pressed
 
     def __logw(self, message: str) -> None:
         """Write one warning line through the logger when it exists.
