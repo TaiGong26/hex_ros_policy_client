@@ -20,6 +20,8 @@
     <!-- hex_util_zenoh has no rosdep key; install it with pip:
          pip install -e <workspace>/pkg/hex_util_zenoh -->
     <exec_depend>hex_util_zenoh</exec_depend>
+    <exec_depend>hex_util_ros</exec_depend>
+    <exec_depend>hex_util_msg</exec_depend>
 
     <test_depend>python3-pytest</test_depend>
 
