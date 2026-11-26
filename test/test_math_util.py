@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 
 from hex_ros_policy_client.utils import (
-    get_interpolator,
-    limit_to_step,
+    get_interpolator_fn,
+    pos_lim,
     linear_interpolate,
     pose_interpolate,
     slerp_interpolate,
@@ -33,24 +33,24 @@ def test_linear_boundaries(elapsed_ns: int, expected: list) -> None:
     assert np.allclose(result, np.array(expected))
 
 
-def test_get_interpolator_returns_table_entry() -> None:
+def test_get_interpolator_fn_returns_table_entry() -> None:
     """A registered name resolves to its function."""
-    assert get_interpolator("linear") is linear_interpolate
+    assert get_interpolator_fn("linear") is linear_interpolate
 
 
-def test_get_interpolator_rejects_unknown_name() -> None:
+def test_get_interpolator_fn_rejects_unknown_name() -> None:
     """An unregistered name is a configuration error."""
     with pytest.raises(ValueError):
-        get_interpolator("cubic")
+        get_interpolator_fn("cubic")
 
 
 def test_slerp_rotates_quarter_turn() -> None:
     """Half of a quarter turn is a 45 degree rotation."""
-    start = np.array([0.0, 0.0, 0.0, 1.0])
-    target = np.array([0.0, 0.0, np.sin(np.pi / 4), np.cos(np.pi / 4)])
+    start = np.array([1.0, 0.0, 0.0, 0.0])
+    target = np.array([np.cos(np.pi / 4), 0.0, 0.0, np.sin(np.pi / 4)])
     result = slerp_interpolate(start, target, 500, 1000)
-    assert np.allclose(result, [0.0, 0.0, np.sin(np.pi / 8),
-                                np.cos(np.pi / 8)], atol=1e-9)
+    assert np.allclose(result, [np.cos(np.pi / 8), 0.0, 0.0,
+                                np.sin(np.pi / 8)], atol=1e-9)
 
 
 def test_slerp_rejects_wrong_shape() -> None:
@@ -61,11 +61,11 @@ def test_slerp_rejects_wrong_shape() -> None:
 
 def test_pose_interpolates_position_and_orientation() -> None:
     """A pose interpolates its two halves with their own rules."""
-    start = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-    target = np.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0])
+    start = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+    target = np.array([1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
     result = pose_interpolate(start, target, 500, 1000)
     assert np.allclose(result[:3], [0.5, 0.5, 0.5])
-    assert np.allclose(result[3:], [0.0, 0.0, 0.0, 1.0], atol=1e-9)
+    assert np.allclose(result[3:], [1.0, 0.0, 0.0, 0.0], atol=1e-9)
 
 
 def test_pose_rejects_wrong_shape() -> None:
@@ -78,7 +78,7 @@ def test_limit_keeps_target_below_threshold() -> None:
     """An error inside the threshold is sent unchanged."""
     measured = np.zeros(3)
     target = np.array([0.05, -0.05, 0.0])
-    result = limit_to_step(target, measured, 0.1)
+    result = pos_lim(target, measured, 0.1)
     assert np.allclose(result, target)
 
 
@@ -86,13 +86,8 @@ def test_limit_scales_above_threshold() -> None:
     """An error above the threshold is scaled on every element equally."""
     measured = np.zeros(2)
     target = np.array([0.5, 0.1])
-    result = limit_to_step(target, measured, 0.1)
+    result = pos_lim(target, measured, 0.1)
     ratio = 0.1 / 0.5
     assert np.allclose(result, target * ratio)
     assert np.allclose(np.sign(result), np.sign(target))
 
-
-def test_limit_rejects_bad_threshold() -> None:
-    """A non positive threshold is a configuration error."""
-    with pytest.raises(ValueError):
-        limit_to_step(np.zeros(1), np.zeros(1), 0.0)

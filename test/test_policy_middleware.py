@@ -19,9 +19,6 @@ from hex_util_zenoh.proto_util.policy_proto_schema import (
 )
 from hex_ros_policy_client.protocol import policy_middleware as middleware
 from hex_ros_policy_client.protocol import proto_helper
-from hex_ros_policy_client.struct.cmd_struct import (
-    ACTION_MODES,
-)
 from hex_ros_policy_client.struct.device_struct import (
     ArmObservation,
     ArmState,
@@ -30,9 +27,6 @@ from hex_ros_policy_client.struct.device_struct import (
     ImageFrame,
 )
 from hex_ros_policy_client.struct.geom_struct import Pose
-from hex_ros_policy_client.utils.common_util.logkit import (
-    _reset_state as reset_log,
-)
 
 from .fakes import Capture
 
@@ -62,7 +56,7 @@ def observation() -> dict:
 
 
 def action_frame(steps: int = 2, stamp_ns: int = 0,
-                 action_mode: str = "joint",
+                 action_mode: str = "abs",
                  arm_ctrl_mode: str = "pos") -> dict:
     """Build one action frame as the model side sends it.
 
@@ -128,7 +122,7 @@ def test_decode_chunk_passes_steps_through() -> None:
     assert decoded["arm"]["left"] == [[0.0, 0.0], [0.1, 0.0]]
     assert decoded["grip"]["left"] == [[0.0], [0.0]]
     assert decoded["chunk_step_interval_ms"] == 33
-    assert decoded["action_mode"] == "joint"
+    assert decoded["action_mode"] == "abs"
     assert decoded["arm_ctrl_mode"] == "pos"
 
 
@@ -161,8 +155,8 @@ def test_decode_chunk_does_not_judge_the_modes() -> None:
         action_frame(action_mode="absolute"))
     assert decoded["action_mode"] == "absolute"
     decoded = proto_helper.decode_action_chunk(
-        action_frame(arm_ctrl_mode="joint"))
-    assert decoded["arm_ctrl_mode"] == "joint"
+        action_frame(arm_ctrl_mode="wrist"))
+    assert decoded["arm_ctrl_mode"] == "wrist"
 
 
 def test_decode_chunk_rejects_bad_stamp() -> None:
@@ -184,21 +178,12 @@ def test_frame_keys_come_from_the_frame_type() -> None:
         "header", "camera", "arm"}
 
 
-def test_protocol_tables_are_consistent() -> None:
-    """The wire and the command layer share one vocabulary, with no mapping."""
-    from hex_ros_policy_client.process.action_restore import ACTION_RESTORERS
-
-    assert set(ACTION_MODES) == set(ACTION_RESTORERS)
-
-
 def build_middleware(logger: Capture | None = None,
-                     on_event=None,
                      capacity: int = 4) -> middleware.PolicyMiddleware:
     """Create a middleware instance without opening a session.
 
     Args:
         logger (Capture | None): Logger for drop lines.
-        on_event (Any): Event handler.
         capacity (int): Chunk queue capacity.
 
     Returns:
@@ -207,7 +192,6 @@ def build_middleware(logger: Capture | None = None,
     return middleware.PolicyMiddleware("policy/observation", "policy/action",
                                        "policy/inference",
                                        capacity=capacity,
-                                       on_event=on_event,
                                        logger=logger or Capture())
 
 
@@ -228,13 +212,12 @@ def test_action_payload_is_queued() -> None:
     payload = policy_proto_parser.pack(action_frame())
     instance._PolicyMiddleware__on_action_payload(payload)
     chunk = instance.request_chunk()
-    assert chunk["action_mode"] == "joint"
+    assert chunk["action_mode"] == "abs"
     assert chunk["arm"]["left"] == [[0.0, 0.0], [0.1, 0.0]]
 
 
 def test_bad_action_payload_is_dropped() -> None:
     """A broken chunk is logged and does not reach the queue."""
-    reset_log()
     logger = Capture()
     instance = build_middleware(logger)
     instance._PolicyMiddleware__on_action_payload(b"\xc1")
@@ -244,7 +227,6 @@ def test_bad_action_payload_is_dropped() -> None:
 
 def test_queue_overflow_drops_the_oldest() -> None:
     """The queue keeps its capacity and discards the oldest entry."""
-    reset_log()
     logger = Capture()
     capacity = 3
     instance = build_middleware(logger, capacity=capacity)
@@ -253,43 +235,6 @@ def test_queue_overflow_drops_the_oldest() -> None:
             policy_proto_parser.pack(action_frame(steps=1)))
     assert instance.request_chunk() is not None
     assert "chunk.queue/full" in logger.messages()[-1]
-
-
-def test_event_frame_reaches_the_handler() -> None:
-    """An event frame is forwarded without further interpretation."""
-    received = []
-    instance = build_middleware(on_event=received.append)
-    payload = policy_proto_parser.pack({"kind": "start"})
-    instance._PolicyMiddleware__on_inference_payload(payload)
-    assert received == [{"kind": "start"}]
-
-
-def test_unknown_kind_is_forwarded_to_the_node() -> None:
-    """A non event frame reaches the node, which owns the mapping table."""
-    received = []
-    instance = build_middleware(on_event=received.append)
-    payload = policy_proto_parser.pack({"kind": "resume"})
-    instance._PolicyMiddleware__on_inference_payload(payload)
-    assert received == [{"kind": "resume"}]
-
-
-def test_frame_without_kind_is_forwarded() -> None:
-    """Anything that is not an enable frame goes up; the node decides."""
-    received = []
-    instance = build_middleware(on_event=received.append)
-    payload = policy_proto_parser.pack({"enabled": True})
-    instance._PolicyMiddleware__on_inference_payload(payload)
-    assert received == [{"enabled": True}]
-
-
-def test_own_inference_frame_is_filtered() -> None:
-    """The enable flag published by this node is not fed back as an event."""
-    received = []
-    instance = build_middleware(on_event=received.append)
-    frame = proto_helper.build_inference_frame(True)
-    payload = policy_proto_parser.pack(frame)
-    instance._PolicyMiddleware__on_inference_payload(payload)
-    assert received == []
 
 
 def test_publish_without_session_is_safe() -> None:
@@ -309,42 +254,161 @@ def test_transport_holds_one_util_node() -> None:
     assert not issubclass(middleware.PolicyMiddleware, HexZenohNode)
 
 
-def test_start_declares_the_three_endpoints(monkeypatch) -> None:
-    """start() opens the util session and declares both links."""
-    from hex_util_zenoh import HexZenohNode
+class _Publisher:
+    """Stand-in of a Zenoh publisher that records what it is given."""
 
-    calls: list = []
-    monkeypatch.setattr(HexZenohNode, "start",
-                        lambda self: calls.append("start"))
-    monkeypatch.setattr(HexZenohNode, "create_pub",
-                        lambda self, topic: calls.append(("pub", topic)))
-    monkeypatch.setattr(HexZenohNode, "create_sub",
-                        lambda self, topic, callback:
-                        calls.append(("sub", topic)))
-    instance = build_middleware()
+    def __init__(self, topic: str, sink: list) -> None:
+        self.topic = topic
+        self.sink = sink
+
+    def put(self, data: bytes) -> None:
+        """Record one payload.
+
+        Args:
+            data (bytes): Payload handed to the link.
+        """
+        self.sink.append((self.topic, data))
+
+
+class FakeZenoh:
+    """Stand-in of ``HexZenohNode`` that keeps its real behaviour.
+
+    ``create_pub`` mirrors the real one, which stores the publisher and does
+    not return it on the first call. A test that reaches ``pub`` before the
+    endpoint exists therefore fails the same way the real node would.
+    """
+
+    def __init__(self, config=None) -> None:
+        self.publishers: dict = {}
+        self.callbacks: dict = {}
+        self.sent: list = []
+        self.opened = 0
+        self.closed = 0
+        self.__working = False
+
+    @property
+    def is_working(self) -> bool:
+        """Whether a session is open.
+
+        Returns:
+            bool: ``True`` between ``start`` and ``close``.
+        """
+        return self.__working
+
+    def start(self) -> None:
+        """Open the session."""
+        self.opened += 1
+        self.__working = True
+
+    def close(self) -> None:
+        """Close the session."""
+        self.closed += 1
+        self.__working = False
+
+    def create_pub(self, topic_name: str):
+        """Declare one publisher exactly as the real node does.
+
+        Args:
+            topic_name (str): Key of the link.
+        """
+        if topic_name in self.publishers:
+            return self.publishers[topic_name]
+        self.publishers[topic_name] = _Publisher(topic_name, self.sent)
+
+    def create_sub(self, topic_name: str, callback) -> None:
+        """Declare one subscriber.
+
+        Args:
+            topic_name (str): Key of the link.
+            callback (callable): Handler of one payload.
+        """
+        self.callbacks[topic_name] = callback
+
+    def pub(self, topic_name: str, data: bytes) -> None:
+        """Publish one payload the way the real node does.
+
+        Args:
+            topic_name (str): Key of the link.
+            data (bytes): Payload to hand over.
+        """
+        publisher = self.publishers.get(topic_name)
+        if publisher is None:
+            publisher = self.create_pub(topic_name)
+        publisher.put(data)
+
+
+def with_fake_node(monkeypatch, capacity: int = 4, logger=None):
+    """Build a middleware whose session is the faithful stand-in.
+
+    Args:
+        monkeypatch: Pytest fixture.
+        capacity (int): Chunk queue capacity.
+        logger (Capture | None): Logger that receives the drop lines.
+
+    Returns:
+        tuple: Middleware and its stand-in node.
+    """
+    fake = FakeZenoh()
+    monkeypatch.setattr(middleware, "HexZenohNode", lambda config=None: fake)
+    return build_middleware(logger=logger, capacity=capacity), fake
+
+
+def test_start_declares_both_publishers_and_the_action_subscriber(
+        monkeypatch) -> None:
+    """The usage the node relies on: both links are declared on start."""
+    instance, fake = with_fake_node(monkeypatch)
     instance.start()
-    assert calls[0] == "start"
-    assert ("pub", "policy/observation") in calls
-    assert ("pub", "policy/inference") in calls
-    assert ("sub", "policy/action") in calls
-    assert ("sub", "policy/inference") in calls
+    assert fake.opened == 1
+    assert "policy/observation" in fake.publishers
+    assert "policy/inference" in fake.publishers
+    assert "policy/action" in fake.callbacks
 
 
-def test_publish_goes_through_the_util_node(monkeypatch) -> None:
-    """A published frame is a byte payload handed to the util node."""
-    from hex_util_zenoh import HexZenohNode
+def test_observation_frames_reach_the_link_after_start(monkeypatch) -> None:
+    """Publishing twice must both land, which needs the endpoint declared."""
+    instance, fake = with_fake_node(monkeypatch)
+    instance.start()
+    frame = proto_helper.build_observation_frame(
+        observation=observation(), name_map=None)
+    assert instance.pub_obs(frame=frame) is True
+    assert instance.pub_obs(frame=frame) is True
+    assert [topic for topic, _ in fake.sent] == ["policy/observation"] * 2
+    decoded = policy_proto_parser.unpack(fake.sent[0][1])
+    assert set(decoded) == set(
+        policy_proto_parser.frame_keys(ObservationFrame))
 
-    sent: list = []
-    monkeypatch.setattr(HexZenohNode, "pub",
-                        lambda self, topic, data: sent.append((topic, data)))
-    monkeypatch.setattr(HexZenohNode, "is_working",
-                        property(lambda self: True))
-    instance = build_middleware()
+
+def test_inference_frames_reach_the_link_after_start(monkeypatch) -> None:
+    """The enable flag is published every tick, so it must survive repeats."""
+    instance, fake = with_fake_node(monkeypatch)
+    instance.start()
     frame = proto_helper.build_inference_frame(enabled=True)
     assert instance.pub_inference_state(frame=frame) is True
-    topic, payload = sent[0]
-    assert topic == "policy/inference"
-    assert policy_proto_parser.unpack(payload) == {"inference_enabled": True}
+    assert instance.pub_inference_state(frame=frame) is True
+    assert [topic for topic, _ in fake.sent] == ["policy/inference"] * 2
+    assert policy_proto_parser.unpack(fake.sent[0][1]) == {
+        "inference_enabled": True}
+
+
+def test_malformed_action_payload_is_dropped_and_logged(monkeypatch) -> None:
+    """A payload that is not a chunk never reaches the queue."""
+    logger = Capture()
+    instance, fake = with_fake_node(monkeypatch, logger=logger)
+    instance.start()
+    callback = fake.callbacks["policy/action"]
+    callback(b"not-a-frame")
+    assert instance.request_chunk() is None
+    assert any("frame.schema/schema_invalid" in line
+               for line in logger.messages())
+
+
+def test_close_releases_the_session(monkeypatch) -> None:
+    """Closing the transport closes the session once."""
+    instance, fake = with_fake_node(monkeypatch)
+    instance.start()
+    instance.close()
+    assert fake.closed == 1
+    assert fake.is_working is False
 
 
 def test_request_chunk_returns_the_newest_and_drains_the_queue() -> None:

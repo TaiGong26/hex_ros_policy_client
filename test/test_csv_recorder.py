@@ -16,7 +16,6 @@ from hex_ros_policy_client.utils import (
     KIND_CHUNK,
     KIND_STATE,
     KIND_TARGET,
-    KIND_WEIGHT,
     STAGE_LIMITED,
     STAGE_RAW,
     CsvRecorder,
@@ -27,8 +26,7 @@ from hex_ros_policy_client.utils.common_util import (
 from hex_ros_policy_client.struct.cmd_struct import (
     ARM_CTRL_MODES,
     GRIP_CTRL_MODES,
-    TARGET_ARM,
-    TARGET_GRIP,
+    ControlIntent,
     ArmCommand,
     GripCommand,
 )
@@ -41,12 +39,12 @@ def target(values: list) -> dict:
         values (list): Joint values.
 
     Returns:
-        dict: Target keyed by command type.
+        dict: ControlIntent keyed by command type.
     """
-    return {
-        TARGET_ARM: {"left": ArmCommand(pos=values)},
-        TARGET_GRIP: {"left": GripCommand(pos=[0.5])},
-    }
+    return ControlIntent(
+        arm={"left": ArmCommand(pos=values)},
+        grip={"left": GripCommand(pos=[0.5])},
+    )
 
 
 def test_columns_follow_the_arm_count(tmp_path) -> None:
@@ -72,14 +70,13 @@ def test_writes_every_recorder_file(tmp_path) -> None:
     recorder = CsvRecorder(str(tmp_path), ("left",), 2)
     recorder.start()
     recorder.record_state(1, "change", "A", "B", "stable_arrived")
-    recorder.record_weight(2, 7, 0.5)
     recorder.record_chunk(7, 2, 33, 0, {"left": [0.1, 0.2]},
                           {"left": [0.5]})
     recorder.record_target(3, STAGE_RAW, target([0.1, 0.2]))
     recorder.record_target(3, STAGE_LIMITED, target([0.05, 0.1]))
     recorder.close()
-    rows = {KIND_STATE: 1, KIND_WEIGHT: 1, KIND_CHUNK: 1, KIND_TARGET: 2}
-    for kind in (KIND_STATE, KIND_WEIGHT, KIND_CHUNK, KIND_TARGET):
+    rows = {KIND_STATE: 1, KIND_CHUNK: 1, KIND_TARGET: 2}
+    for kind in (KIND_STATE, KIND_CHUNK, KIND_TARGET):
         content = (tmp_path / f"{kind}.csv").read_text(encoding="utf-8")
         assert content.count("\n") == rows[kind] + 1
 
