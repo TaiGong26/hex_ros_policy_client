@@ -35,7 +35,6 @@ class DataInterface(InterfaceBase):
         self.__node.declare_parameter('rate_ros', 1000.0)
         self.__node.declare_parameter('observation_rate_hz', 30.0)
         self.__node.declare_parameter('stable_duration_s', 2.0)
-        self.__node.declare_parameter('stable_timeout_s', 15.0)
         self.__node.declare_parameter('arrive_threshold', 0.05)
         self.__node.declare_parameter('init_timeout_s', 5.0)
         self.__node.declare_parameter('max_episode_s', 120.0)
@@ -55,8 +54,6 @@ class DataInterface(InterfaceBase):
             self.__node.get_parameter('observation_rate_hz').value,
             "stable_duration_s":
             self.__node.get_parameter('stable_duration_s').value,
-            "stable_timeout_s":
-            self.__node.get_parameter('stable_timeout_s').value,
             "arrive_threshold":
             self.__node.get_parameter('arrive_threshold').value,
             "init_timeout_s":
@@ -93,10 +90,7 @@ class DataInterface(InterfaceBase):
 
 
     def __spin(self):
-        try:
-            rclpy.spin(self.__node)
-        except rclpy.executors.ExternalShutdownException:
-            pass
+        rclpy.spin(self.__node)
 
     def ok(self):
         return rclpy.ok()
@@ -116,7 +110,10 @@ class DataInterface(InterfaceBase):
         self.__spin_thread.join()
 
     def sleep(self):
-        self.__rate.sleep()
+        try:
+            self.__rate.sleep()
+        except rclpy.exceptions.ROSInterruptException:
+            pass
 
     ####################
     ### clock

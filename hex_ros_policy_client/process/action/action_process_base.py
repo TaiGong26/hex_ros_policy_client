@@ -15,7 +15,7 @@ from typing import Any, Callable
 import numpy as np
 
 from ...struct.cmd_struct import ControlIntent
-from ...struct.device_struct import ObservationFrame
+from ...struct.device_struct import DeviceObservationFrame
 from ...struct.geom_struct import Pose
 
 # How many observations are kept, so the increments have a reference to use.
@@ -85,14 +85,14 @@ class ActionProcessBase(ABC):
         self.__anchors: deque[tuple[int, dict]] = deque(
             maxlen=int(params.anchor_capacity))
 
-    def push_obs(self, observation: ObservationFrame) -> None:
+    def push_obs(self, observation: DeviceObservationFrame) -> None:
         """Keep one observation as the reference of the increment modes.
 
         Both arm values are extracted here, because the control mode of a
         future chunk is unknown and each mode needs its own value.
 
         Args:
-            observation (ObservationFrame): Assembled frame; only its arm
+            observation (DeviceObservationFrame): Assembled frame; only its arm
                 samples carry a reference, a sample whose arm state is
                 ``None`` is skipped, and a frame without a stamp is ignored.
         """

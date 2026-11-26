@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ...struct.device_struct import DeviceObservationFrame
 from .observation_frame_assembly_base import (
     ObservationFrameAssemblyBase,
     ObservationFrameAssemblyParam,
@@ -65,13 +66,13 @@ class BiasObservationAssembly(ObservationFrameAssemblyBase):
         self.__bias_ns = int(params.bias_ns)
         self.__camera_tolerance_ns = int(params.camera_tolerance_ns)
 
-    def get_obs(self) -> dict | None:
+    def get_obs(self) -> DeviceObservationFrame | None:
         """Assemble the frame of the biased instant.
 
         Returns:
-            dict | None: ``{"stamp_ns", "camera", "arm"}`` at the biased
-            instant, ``None`` when a camera is missing, a camera is too far
-            from that instant, or a device cannot be blended to it.
+            DeviceObservationFrame | None: ``{"stamp_ns", "camera", "arm"}``
+            at the biased instant, ``None`` when a camera is missing, a camera
+            is too far from that instant, or a device cannot be blended to it.
         """
         latest_observation = self._latest_observation()
         if latest_observation is None:

@@ -17,6 +17,7 @@ from ...struct.device_struct import (
     ArmObservation,
     ArmState,
     CameraObservation,
+    DeviceObservationFrame,
     GripState,
     ImageFrame,
 )
@@ -105,13 +106,13 @@ class ObservationFrameAssemblyBase(ABC):
         self.__history.clear()
 
     @abstractmethod
-    def get_obs(self) -> dict | None:
+    def get_obs(self) -> DeviceObservationFrame | None:
         """Assemble the frame of the instant this assembler works on.
 
         Returns:
-            dict | None: ``{"stamp_ns", "camera", "arm"}`` when every device
-            can be placed at that instant, ``None`` when the frame is
-            refused.
+            DeviceObservationFrame | None: ``{"stamp_ns", "camera", "arm"}``
+            when every device can be placed at that instant, ``None`` when the
+            frame is refused.
         """
 
     def _latest_observation(self) -> dict | None:
@@ -123,7 +124,7 @@ class ObservationFrameAssemblyBase(ABC):
         """
         return self.__history[-1] if self.__history else None
 
-    def _blend_frame_at(self, target_ns: int) -> dict | None:
+    def _blend_frame_at(self, target_ns: int) -> DeviceObservationFrame | None:
         """Place every device at one instant and return the frame.
 
         Every array of the frame is new, so a caller cannot reach the kept
@@ -136,18 +137,19 @@ class ObservationFrameAssemblyBase(ABC):
             target_ns (int): Instant the frame describes, in nanoseconds.
 
         Returns:
-            dict | None: ``{"stamp_ns", "camera", "arm"}`` at ``target_ns``,
+            DeviceObservationFrame | None: ``{"stamp_ns", "camera", "arm"}``
+            at ``target_ns``,
             ``None`` when an arm has no sample, or no pair of samples that
             brackets the instant.
         """
         latest_observation = self._latest_observation()
         if latest_observation is None:
             return None
-        assembled_frame: dict = {
-            "stamp_ns": target_ns,
-            "camera": {},
-            "arm": {},
-        }
+        assembled_frame = DeviceObservationFrame(
+            stamp_ns=target_ns,
+            camera={},
+            arm={},
+        )
         for device_name, camera_sample in latest_observation[
                 "camera"].items():
             assembled_frame["camera"][device_name] = _copy_camera(

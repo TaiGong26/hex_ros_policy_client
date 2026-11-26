@@ -12,9 +12,6 @@ dual_manip_policy_client:
     # Duration of the interpolation towards the stable pose [s].
     stable_duration_s: 2.0
 
-    # Abort to EXIT when the stable pose is not reached within [s].
-    stable_timeout_s: 15.0
-
     # Arrival criterion: per arm joint norm must stay below [rad].
     arrive_threshold: 0.05
 

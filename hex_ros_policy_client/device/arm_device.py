@@ -168,7 +168,7 @@ class HexArmDevice(RosDeviceBase):
         ts_ns = self.__stamp_ns(stamp=message.header.stamp)
         item = (ts_ns, message)
         self.__current_states = item
-        
+
         if not self.__queue or ts_ns >= self.__queue[-1][0]:
             self.__queue.append(item)
             return
@@ -234,15 +234,53 @@ class HexArmDevice(RosDeviceBase):
         msg.manip_ctrl.grip_ctrl = grip_ctrl
         self.__publisher.publish(msg)
 
-    def move_to_stable(self) -> bool:
-        pass
-    
-        
+    def move_to_stable(
+        self,
+        duration_ns: int,
+        arrive_threshold: float,
+    ) -> bool:
+        """Send the stable pose as a ramp of the given duration.
+
+        The pose is re-sent on every call with a horizon that starts now, so
+        the driver keeps ramping towards one fixed goal and this device keeps
+        no per segment state.
+
+        Args:
+            duration_ns (int): Length of the ramp, in nanoseconds.
+            arrive_threshold (float): Largest per joint distance to the stable
+                pose that still counts as arrived, in radians.
+
+        Returns:
+            bool: ``True`` when every joint is within ``arrive_threshold``.
+        """
+        goal_pos = self.__stable_pos()
+        if goal_pos is None:
+            return True
+        measured = self.__measured_pos()
+        if measured is None:
+            return False
+        if len(measured) != len(goal_pos):
+            self._logger.logw(
+                f"[arm.{self._name}/stable_shape] stable pose skipped: "
+                f"arm reports {len(measured)} joints but stable_position "
+                f"has {len(goal_pos)}")
+            return False
+        self.send_ctrl(
+            arm_command=ArmCommand(ctrl_mode=ARM_CTRL_MODES[0], pos=goal_pos),
+            target_time_ns=self._now_fn() + duration_ns,
+        )
+        return float(np.linalg.norm(measured - goal_pos)) < arrive_threshold
+
     def hold_position(self) -> None:
-        pass
-        
-        
-    
+        """Re-send the stable pose without a target time."""
+        goal_pos = self.__stable_pos()
+        if goal_pos is None:
+            return
+        self.send_ctrl(
+            arm_command=ArmCommand(ctrl_mode=ARM_CTRL_MODES[0], pos=goal_pos))
+
+
+
     def __build_arm_ctrl(
         self,
         command: ArmCommand | None,
@@ -266,15 +304,15 @@ class HexArmDevice(RosDeviceBase):
                 f"ctrl_mode={command.ctrl_mode!r} not in _ARM_MODE_TABLE")
             return None
         arm_params = self.__params["arm"]
-        
+
         msg_arm_ctrl = HexRosRoboArmCtrl()
         msg_arm_ctrl.ctrl_mode = mode
         msg_arm_ctrl.jnt.lim_vel = [arm_params["lim_vel"]]
         msg_arm_ctrl.jnt.lim_acc = [arm_params["lim_acc"]]
         grav = arm_params["grav"]
-        
+
         msg_arm_ctrl.grav = Vector3Msg(x=grav[0], y=grav[1], z=grav[2])
-        
+
         if mode == HexRosRoboArmCtrl.CTRL_MODE_JNT:
             if command.pos is not None:
                 msg_arm_ctrl.jnt.pos = np.asarray(
@@ -302,7 +340,7 @@ class HexArmDevice(RosDeviceBase):
                         f"[arm.{self._name}/mit_no_start] arm command dropped: "
                         "no measured state to ramp from")
                     return None
-                
+
                 msg_arm_ctrl.jnt.pos = pos
                 dof = len(pos)
             if command.vel is not None:
@@ -354,7 +392,7 @@ class HexArmDevice(RosDeviceBase):
         if target_time_ns is None:
             return command_pos.ravel().tolist()
         last_target = self.__last_target
-        
+
         if last_target is None:
             if not self.__current_states:
                 return None
@@ -363,16 +401,16 @@ class HexArmDevice(RosDeviceBase):
                            np.asarray(
                                 message.manip_state.arm_state.jnt.position,
                                 dtype=float).ravel())
-            
+
         last_target_time_ns, last_target_pos = last_target
-        
+
         blended = linear_interpolate(
             start=last_target_pos,
             target=command_pos,
             elapsed_ns=self._now_fn() - last_target_time_ns,
             duration_ns=target_time_ns - last_target_time_ns,
         )
-        
+
         # # limit the blended position
         # measured = self.__current_states
         # if measured is None:
@@ -385,8 +423,8 @@ class HexArmDevice(RosDeviceBase):
         #         dtype=float).ravel(),
         #     travel_ns=self._now_fn() - stamp_ns,
         # )
-        
-        
+
+
         self.__last_target = (target_time_ns, command_pos.copy())
         return blended.ravel().tolist()
 
@@ -537,6 +575,34 @@ class HexArmDevice(RosDeviceBase):
             GRIP_NORM_RANGE[1] - GRIP_NORM_RANGE[0]
         )
         return low + span * (high - low)
+
+    def __stable_pos(self) -> np.ndarray | None:
+        """Return the configured stable pose of this arm.
+
+        Returns:
+            np.ndarray | None: Joint positions in radians, ``None`` when the
+            device table declares no stable pose.
+        """
+        goal = self.__params["arm"]["stable_position"]
+        if goal is None:
+            self._logger.logw(
+                f"[arm.{self._name}/stable_not_ready] stable pose skipped: "
+                "stable_position is missing from the device table")
+            return None
+        return np.asarray(goal, dtype=np.float64).ravel()
+
+    def __measured_pos(self) -> np.ndarray | None:
+        """Return the newest measured joint positions.
+
+        Returns:
+            np.ndarray | None: Joint positions in radians, ``None`` before the
+            first state message.
+        """
+        if self.__current_states is None:
+            return None
+        return np.asarray(
+            self.__current_states[1].manip_state.arm_state.jnt.position,
+            dtype=np.float64).ravel().copy()
 
     @staticmethod
     def __stamp_ns(stamp: Any) -> int:

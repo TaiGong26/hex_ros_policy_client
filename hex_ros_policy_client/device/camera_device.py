@@ -61,12 +61,13 @@ class CameraDevice(RosDeviceBase):
     }
 
     def __init__(
-        self, 
-        name: str, 
+        self,
+        name: str,
         params: dict,
         create_subscription: Callable,
         create_publisher: Callable,
-        logger: Any
+        logger: Any,
+        now_fn: Callable[[], int] | None = None,
     ) -> None:
         """Read the image settings and create the endpoints.
 
@@ -82,6 +83,9 @@ class CameraDevice(RosDeviceBase):
             create_publisher (Callable): ``(msg_type, topic)`` returning the
                 handle of the new publisher, unused by a camera.
             logger (Any): Logger object exposing standard logging methods.
+            now_fn (Callable[[], int] | None): Clock of the node, returning
+                the current time in nanoseconds; ``None`` falls back to the
+                wall clock.
 
         Raises:
             ValueError: If ``crop_mode`` is not supported, or if the entry
@@ -107,6 +111,7 @@ class CameraDevice(RosDeviceBase):
             create_subscription=create_subscription,
             create_publisher=create_publisher,
             logger=logger,
+            now_fn=now_fn,
         )
         
         self.__queues["color"] = deque(maxlen=30)

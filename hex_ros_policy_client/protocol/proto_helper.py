@@ -10,9 +10,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from ..struct.device_struct import (
-    ObservationFrame as DeviceObservationFrame,
-)
+from ..struct.device_struct import DeviceObservationFrame
 from hex_util_zenoh.proto_util import (
     ArmPayload,
     DualArmActionManipFrame,

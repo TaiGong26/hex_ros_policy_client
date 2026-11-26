@@ -12,7 +12,6 @@ import yaml
 
 from ..device.arm_device import HexArmDevice
 from ..device.camera_device import CameraDevice
-from ..device.ros_device_base import RosDeviceBase
 from ..struct.cmd_struct import ControlIntent
 
 SECTION_CAMERAS = "cameras"
@@ -23,7 +22,7 @@ class DualManipRobot:
     """Robot assembled from a device table.
 
     Attributes:
-        device_names (dict | None): Section name to the device names in table
+        device_names (dict): Section name to the device names in table
             order, ``None`` before start and after stop.
     """
 
@@ -40,6 +39,7 @@ class DualManipRobot:
         logger: Any,
         create_subscription: Callable,
         create_publisher: Callable,
+        now_fn: Callable[[], int] | None = None,
     ) -> None:
         """Store the table path and the endpoint factories.
 
@@ -50,13 +50,17 @@ class DualManipRobot:
                 creating and returning a subscription handle.
             create_publisher (Callable): ``(msg_type, topic)`` creating and
                 returning a publisher handle.
+            now_fn (Callable[[], int] | None): Clock handed down to every
+                device, returning the current time in nanoseconds; ``None``
+                lets a device fall back to the wall clock.
         """
         self.__device_path = device_path
         self.__logger = logger
         self.__create_subscription = create_subscription
         self.__create_publisher = create_publisher
-        self.__devices: dict[str, dict[str, RosDeviceBase]] | None = None
-        self.device_names: dict[str, tuple[str, ...]] | None = None
+        self.__now_fn = now_fn
+        self.__devices: dict[str, dict[str, CameraDevice | HexArmDevice ]] | None = None
+        self.device_names: dict[str, tuple[str, ...]] = {}
 
     def start(self) -> None:
         """Create the devices declared by the device table.
@@ -85,10 +89,15 @@ class DualManipRobot:
         dropped, which is what makes a later start build them again.
         """
         self.__devices = None
-        self.device_names = None
+        self.device_names = {}
 
     def read_obs(self) -> dict:
         """Merge the newest sample of every device.
+
+        The device queues are read without draining, because the assembly
+        needs a pair of samples that brackets the target instant; clearing a
+        queue on every tick would leave it empty most of the time and no
+        pair could ever be found.
 
         Returns:
             dict: ``{"camera": {name: sample}, "arm": {name: sample}}`` with
@@ -98,10 +107,10 @@ class DualManipRobot:
         if self.__devices is None:
             return {"camera": {}, "arm": {}}
         return {
-            "camera": {name: device.get_obs()
+            "camera": {name: device.get_obs(drain=False)
                        for name, device
                        in self.__devices[SECTION_CAMERAS].items()},
-            "arm": {name: device.get_obs()
+            "arm": {name: device.get_obs(drain=False)
                     for name, device
                     in self.__devices[SECTION_ARMS].items()},
         }
@@ -146,6 +155,54 @@ class DualManipRobot:
                     target_time_ns=target.stamp_ns,
                 )
 
+
+    def move_to_stable(
+        self,
+        duration_ns: int,
+        arrive_threshold: float,
+    ) -> bool:
+        """Ramp every arm to its stable pose.
+
+        Every device is asked on every call, so no arm is left behind when
+        another one already arrived.
+
+        Args:
+            duration_ns (int): Length of the ramp, in nanoseconds.
+            arrive_threshold (float): Largest per joint distance to the stable
+                pose that still counts as arrived, in radians.
+
+        Returns:
+            bool: ``True`` once every arm reported the arrival.
+        """
+        if self.__devices is None:
+            self.__logger.logw(
+                "[stable.route/not_started] stable skipped: robot is stopped")
+            return False
+        arrived = True
+        for device in self.__devices[SECTION_ARMS].values():
+            if not isinstance(device, HexArmDevice):
+                self.__logger.logw(
+                    "[stable.route/unknown_device] stable skipped: "
+                    f"device {device.name} is not a HexArmDevice")
+                continue
+            if not device.move_to_stable(duration_ns=duration_ns,
+                                         arrive_threshold=arrive_threshold):
+                arrived = False
+        return arrived
+
+    def hold_position(self) -> None:
+        """Re-send the pose every arm reached when the ramp finished."""
+        if self.__devices is None:
+            self.__logger.logw(
+                "[hold.route/not_started] hold skipped: robot is stopped")
+            return
+        for device in self.__devices[SECTION_ARMS].values():
+            if not isinstance(device, HexArmDevice):
+                self.__logger.logw(
+                    "[hold.route/unknown_device] hold skipped: "
+                    f"device {device.name} is not a HexArmDevice")
+                continue
+            device.hold_position()
 
     def __read_table(self, table_path: str) -> dict:
         """Read the device table file.
@@ -220,6 +277,7 @@ class DualManipRobot:
                     self.__create_subscription,
                     self.__create_publisher,
                     self.__logger,
+                    now_fn=self.__now_fn,
                 )
         if not any(devices.values()):
             raise ValueError("device table declares no device")

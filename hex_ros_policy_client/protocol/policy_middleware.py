@@ -71,11 +71,12 @@ class PolicyMiddleware:
         """
         self.__mid_ware.close()
 
-    def pub_obs(self, frame: dict) -> bool:
+    def pub_obs(self, frame: ObservationFrame) -> bool:
         """Publish one observation frame.
 
         Args:
-            frame (dict): Frame with the keys of ``ObservationFrame``.
+            frame (ObservationFrame): Wire frame with the keys of the
+                observation schema.
 
         Returns:
             bool: ``True`` when the frame was handed to the session, ``False``
@@ -90,11 +91,11 @@ class PolicyMiddleware:
         self.__mid_ware.pub(self.__observation_topic, pack(frame=frame))
         return True
 
-    def pub_inference_state(self, frame: dict) -> bool:
+    def pub_inference_state(self, frame: InferenceFrame) -> bool:
         """Publish the inference enable frame of this tick.
 
         Args:
-            frame (dict): Frame with the keys of ``InferenceFrame``.
+            frame (InferenceFrame): Wire frame holding the enable flag.
 
         Returns:
             bool: ``True`` when the frame was handed to the session, ``False``

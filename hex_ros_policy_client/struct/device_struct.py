@@ -98,7 +98,7 @@ class CameraObservation:
     depth: ImageFrame | None = None
 
 
-class ObservationFrame(TypedDict):
+class DeviceObservationFrame(TypedDict):
     """One assembled observation, with integer nanoseconds as its stamp.
 
     Attributes:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ...struct.device_struct import DeviceObservationFrame
 from .observation_frame_assembly_base import (
     ObservationFrameAssemblyBase,
     ObservationFrameAssemblyParam,
@@ -66,14 +67,14 @@ class PrimaryObservationAssembly(ObservationFrameAssemblyBase):
         self.__primary_camera = params.primary_camera
         self.__camera_skew_ns = int(params.camera_skew_ns)
 
-    def get_obs(self) -> dict | None:
+    def get_obs(self) -> DeviceObservationFrame | None:
         """Assemble the frame of the primary camera instant.
 
         Returns:
-            dict | None: ``{"stamp_ns", "camera", "arm"}`` at the instant of
-            the primary picture, ``None`` when a camera is missing, another
-            camera is too far from the primary one, or a device cannot be
-            blended to that instant.
+            DeviceObservationFrame | None: ``{"stamp_ns", "camera", "arm"}``
+            at the instant of the primary picture, ``None`` when a camera is
+            missing, another camera is too far from the primary one, or a
+            device cannot be blended to that instant.
         """
         latest_observation = self._latest_observation()
         if latest_observation is None:
