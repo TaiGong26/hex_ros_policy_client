@@ -27,8 +27,8 @@ def generate_launch_description():
     """
     package_name = "hex_ros_policy_client"
     pkg_share = FindPackageShare(package_name).find(package_name)
-    param_path = pkg_share + "/config/ros2/policy_client.yaml"
-    device_path = pkg_share + "/config/ros2/devices.yaml"
+    param_path = pkg_share + "/config/ros2/dual_manip_policy_client.yaml"
+    device_path = pkg_share + "/config/ros2/dual_manip_devices.yaml"
 
     device_arg = DeclareLaunchArgument(
         name="device_path",
@@ -42,8 +42,8 @@ def generate_launch_description():
 
     policy_client = Node(
         package=package_name,
-        executable="policy_client",
-        name="policy_client",
+        executable="dual_manip_policy_client",
+        name="dual_manip_policy_client",
         output="screen",
         parameters=[
             param_path,
